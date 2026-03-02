@@ -1,9 +1,12 @@
 /**
  * Generate extension icons using Puppeteer
- * Design spec: red (#ef4444) rounded rect, white text "掰it"
- * - 128px: 掰it (ZCOOL KuaiLe + Nunito 700)
- * - 48px: 掰it
- * - 16px: only 掰
+ *
+ * Two sets:
+ * - Default: icon16.png, icon48.png, icon128.png (red, no indicator)
+ * - Active:  icon16-on.png, icon48-on.png, icon128-on.png (red + green dot)
+ *
+ * All sizes show single "掰" character (ZCOOL KuaiLe 400).
+ * Green dot (#22c55e) in bottom-right corner indicates enabled state.
  */
 import puppeteer from 'puppeteer';
 import { writeFile, mkdir } from 'fs/promises';
@@ -13,47 +16,21 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ICONS_DIR = path.join(__dirname, '..', 'icons');
 
-const ICONS = [
-  {
-    size: 128,
-    html: `
-      <div style="display:flex;align-items:baseline;">
-        <span style="font-family:'ZCOOL KuaiLe';font-size:58px;color:#fff;line-height:1;">掰</span>
-        <span style="font-family:'Nunito';font-size:46px;font-weight:700;color:rgba(255,255,255,0.85);line-height:1;margin-left:1px;">it</span>
-      </div>
-    `
-  },
-  {
-    size: 48,
-    html: `
-      <div style="display:flex;align-items:baseline;">
-        <span style="font-family:'ZCOOL KuaiLe';font-size:22px;color:#fff;line-height:1;">掰</span>
-        <span style="font-family:'Nunito';font-size:16px;font-weight:700;color:rgba(255,255,255,0.8);line-height:1;margin-left:0;">it</span>
-      </div>
-    `
-  },
-  {
-    size: 16,
-    html: `
-      <span style="font-family:'ZCOOL KuaiLe';font-size:10px;color:#fff;line-height:1;">掰</span>
-    `
-  }
+const SIZES = [
+  { size: 128, fontSize: 88, dotSize: 28, dotStroke: 3, dotOffset: 6 },
+  { size: 48,  fontSize: 34, dotSize: 10, dotStroke: 1.5, dotOffset: 2 },
+  { size: 16,  fontSize: 12, dotSize: 5,  dotStroke: 1, dotOffset: 0 },
 ];
 
-async function generate() {
-  await mkdir(ICONS_DIR, { recursive: true });
+function buildHtml({ size, fontSize, dotSize, dotStroke, dotOffset, showDot }) {
+  const radius = Math.round(size * 0.22);
+  const yOffset = Math.round(size * -0.04);
+  const dotPos = dotOffset;
 
-  const browser = await puppeteer.launch({ headless: true });
-  const page = await browser.newPage();
-
-  for (const icon of ICONS) {
-    const { size, html } = icon;
-    const radius = Math.round(size * 0.22);
-
-    const fullHtml = `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html>
 <head>
-  <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Nunito:wght@700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap&text=掰" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; }
     body {
@@ -70,32 +47,69 @@ async function generate() {
       display: flex;
       align-items: center;
       justify-content: center;
+      position: relative;
+    }
+    .icon span {
+      font-family: 'ZCOOL KuaiLe', sans-serif;
+      font-size: ${fontSize}px;
+      color: #fff;
+      line-height: 1;
+      transform: translateY(${yOffset}px);
+    }
+    .dot {
+      position: absolute;
+      bottom: ${dotPos}px;
+      right: ${dotPos}px;
+      width: ${dotSize}px;
+      height: ${dotSize}px;
+      border-radius: 50%;
+      background: #22c55e;
+      border: ${dotStroke}px solid rgba(0,0,0,0.3);
+      display: ${showDot ? 'block' : 'none'};
     }
   </style>
 </head>
 <body>
-  <div class="icon">${html}</div>
+  <div class="icon">
+    <span>掰</span>
+    <div class="dot"></div>
+  </div>
 </body>
 </html>`;
+}
 
-    await page.setViewport({ width: size, height: size, deviceScaleFactor: 1 });
-    await page.setContent(fullHtml, { waitUntil: 'domcontentloaded' });
-    // Wait for fonts to load (with timeout fallback)
-    await page.evaluate(() => Promise.race([
-      document.fonts.ready,
-      new Promise(r => setTimeout(r, 5000))
-    ]));
-    await new Promise(r => setTimeout(r, 1000));
+async function generate() {
+  await mkdir(ICONS_DIR, { recursive: true });
 
-    const screenshot = await page.screenshot({
-      type: 'png',
-      omitBackground: true,
-      clip: { x: 0, y: 0, width: size, height: size }
-    });
+  const browser = await puppeteer.launch({ headless: true });
+  const page = await browser.newPage();
 
-    const outPath = path.join(ICONS_DIR, `icon${size}.png`);
-    await writeFile(outPath, screenshot);
-    console.log(`Generated ${outPath} (${size}x${size})`);
+  for (const sizeConfig of SIZES) {
+    for (const { suffix, showDot } of [
+      { suffix: '', showDot: false },
+      { suffix: '-on', showDot: true },
+    ]) {
+      const html = buildHtml({ ...sizeConfig, showDot });
+      const { size } = sizeConfig;
+
+      await page.setViewport({ width: size, height: size, deviceScaleFactor: 1 });
+      await page.setContent(html, { waitUntil: 'domcontentloaded' });
+      await page.evaluate(() => Promise.race([
+        document.fonts.ready,
+        new Promise(r => setTimeout(r, 5000))
+      ]));
+      await new Promise(r => setTimeout(r, 1000));
+
+      const screenshot = await page.screenshot({
+        type: 'png',
+        omitBackground: true,
+        clip: { x: 0, y: 0, width: size, height: size }
+      });
+
+      const outPath = path.join(ICONS_DIR, `icon${size}${suffix}.png`);
+      await writeFile(outPath, screenshot);
+      console.log(`Generated ${outPath}`);
+    }
   }
 
   await browser.close();

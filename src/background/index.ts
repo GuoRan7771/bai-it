@@ -78,10 +78,15 @@ async function toggleSite(hostname: string): Promise<{ enabled: boolean; disable
   return { enabled, disabledSites: config.disabledSites };
 }
 
-async function updateBadge(tabId: number, enabled: boolean): Promise<void> {
-  await chrome.action.setBadgeText({ text: enabled ? "ON" : "", tabId });
-  await chrome.action.setBadgeBackgroundColor({
-    color: enabled ? "#ef4444" : "#888888",
+/** 切换工具栏图标：带绿点(启用) / 无绿点(禁用) */
+async function updateIcon(tabId: number, active: boolean): Promise<void> {
+  const suffix = active ? "-on" : "";
+  await chrome.action.setIcon({
+    path: {
+      16: `icons/icon16${suffix}.png`,
+      48: `icons/icon48${suffix}.png`,
+      128: `icons/icon128${suffix}.png`,
+    },
     tabId,
   });
 }
@@ -229,9 +234,10 @@ async function handleMessage(
       const tabId = sender.tab?.id;
       const tabUrl = sender.tab?.url ?? "";
       const hostname = getHostname(tabUrl);
-      const enabled = hostname ? await isSiteEnabled(hostname) : false;
-      if (tabId) updateBadge(tabId, enabled);
-      return { active: enabled };
+      const siteOn = hostname ? await isSiteEnabled(hostname) : false;
+      const active = siteOn && !(tabId && pausedTabs.has(tabId));
+      if (tabId) updateIcon(tabId, active);
+      return { active };
     }
 
     case "toggleSite": {
@@ -243,7 +249,7 @@ async function handleMessage(
         if (tab.id && tab.url) {
           const tabHost = getHostname(tab.url);
           if (tabHost === hostname) {
-            updateBadge(tab.id, result.enabled);
+            updateIcon(tab.id, result.enabled);
             chrome.tabs.sendMessage(tab.id, {
               type: result.enabled ? "activate" : "deactivate",
             }).catch(() => {});
@@ -257,6 +263,7 @@ async function handleMessage(
     case "pauseTab": {
       const { tabId } = message;
       pausedTabs.add(tabId);
+      updateIcon(tabId, false);
       chrome.tabs.sendMessage(tabId, { type: "pause" }).catch(() => {});
       return { ok: true };
     }
@@ -264,6 +271,7 @@ async function handleMessage(
     case "resumeTab": {
       const { tabId } = message;
       pausedTabs.delete(tabId);
+      updateIcon(tabId, true);
       chrome.tabs.sendMessage(tabId, { type: "resume" }).catch(() => {});
       return { ok: true };
     }
@@ -293,15 +301,17 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
   const tab = await chrome.tabs.get(activeInfo.tabId);
   if (tab.url) {
     const hostname = getHostname(tab.url);
-    const enabled = hostname ? await isSiteEnabled(hostname) : false;
-    updateBadge(activeInfo.tabId, enabled);
+    const siteOn = hostname ? await isSiteEnabled(hostname) : false;
+    const active = siteOn && !pausedTabs.has(activeInfo.tabId);
+    updateIcon(activeInfo.tabId, active);
   }
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete" && tab.url) {
     const hostname = getHostname(tab.url);
-    const enabled = hostname ? await isSiteEnabled(hostname) : false;
-    updateBadge(tabId, enabled);
+    const siteOn = hostname ? await isSiteEnabled(hostname) : false;
+    const active = siteOn && !pausedTabs.has(tabId);
+    updateIcon(tabId, active);
   }
 });
