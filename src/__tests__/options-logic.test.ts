@@ -207,7 +207,8 @@ describe("Dashboard data aggregation", () => {
       chunked: "First",
       new_words: [],
     });
-    // Add a small delay to ensure different timestamps
+    // Ensure different timestamps (Date.now() can return same ms)
+    await new Promise(r => setTimeout(r, 10));
     const r2 = await learningRecordDAO.add(db, {
       sentence: "Second",
       chunked: "Second",
