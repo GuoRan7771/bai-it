@@ -343,6 +343,51 @@ function onStorageChanged(changes: { [key: string]: chrome.storage.StorageChange
   }
 }
 
+// ========== URL 检测 ==========
+
+const URL_PATTERN = /https?:\/\/\S+/;
+
+/**
+ * 过滤 URL 段落片段
+ *
+ * Twitter 等站点的 DOM 会把一条 URL 拆成多个 <span>（如 "https://"、
+ * "claude.com/community/amba"、"ssador"、"…"），导致 innerText 产生
+ * 多个短段落。这里检测以 "http(s)://" 开头的段落，并把后续的单词片段
+ * （仅 1 个词的段落）一并过滤掉。
+ */
+function filterUrlParagraphs(paragraphs: string[]): string[] {
+  const result: string[] = [];
+  let inUrl = false;
+
+  for (const para of paragraphs) {
+    const trimmed = para.trim();
+
+    // URL 起始
+    if (/^https?:\/\//.test(trimmed)) {
+      inUrl = true;
+      continue; // 跳过
+    }
+
+    if (inUrl) {
+      // 省略号标志 URL 结束
+      if (/^[…⋯.]{1,3}$/.test(trimmed)) {
+        inUrl = false;
+        continue;
+      }
+      // 单词段落（无空格）→ 仍是 URL 片段
+      if (!/\s/.test(trimmed)) {
+        continue;
+      }
+      // 多词段落 → 不再是 URL 片段
+      inUrl = false;
+    }
+
+    result.push(para);
+  }
+
+  return result;
+}
+
 // ========== 文本提取工具 ==========
 
 /**
@@ -528,7 +573,7 @@ function scanPage(): void {
 
     // 统一扫读：按段落/句子本地拆分
     processedElements.add(el);
-    const paragraphs = extractParagraphs(el);
+    const paragraphs = filterUrlParagraphs(extractParagraphs(el));
     const allChunkedLines: string[] = [];
     let hasAnyChunks = false;
 
@@ -537,6 +582,11 @@ function scanPage(): void {
 
       const sentences = splitIntoSentences(paragraphs[pi]);
       for (const sentence of sentences) {
+        // 跳过含 URL 的句子
+        if (URL_PATTERN.test(sentence)) {
+          allChunkedLines.push(sentence);
+          continue;
+        }
         const scanResult = scanSplit(sentence, config.scanThreshold, config.chunkGranularity);
         if (scanResult.chunks.length > 1) {
           hasAnyChunks = true;
