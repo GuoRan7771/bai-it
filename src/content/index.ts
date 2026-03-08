@@ -836,8 +836,8 @@ function findTextLeafElements(): Element[] {
     // 只看块级标签
     if (!BLOCK_TAGS.has(el.tagName)) continue;
 
-    // 排除不可能是正文的标签/区域
-    if (el.closest('nav, header, footer, aside, [role="navigation"], [role="banner"], [role="complementary"]')) continue;
+    // 排除不可能是正文的标签/区域（含 Web App 的 ARIA widget roles）
+    if (el.closest('nav, header, footer, aside, [role="navigation"], [role="banner"], [role="complementary"], [role="grid"], [role="gridcell"], [role="row"], [role="rowgroup"], [role="listbox"]')) continue;
 
     // 已处理或已被掰it 注入的跳过
     if (processedElements.has(el)) continue;
@@ -880,7 +880,7 @@ function scanPage(): void {
   for (const el of candidates) {
     if (processedElements.has(el)) continue;
     if (isEnlearnElement(el)) continue;
-    if (el.closest('nav, header, footer, aside, [role="link"], [role="navigation"], [role="banner"], [role="complementary"]')) continue;
+    if (el.closest('nav, header, footer, aside, [role="link"], [role="navigation"], [role="banner"], [role="complementary"], [role="grid"], [role="gridcell"], [role="row"], [role="rowgroup"], [role="listbox"]')) continue;
 
     // 跳过包含更具体匹配的父容器
     // 例如 Twitter 上 div[lang="en"] 可能同时匹配 tweetText 和包裹它的父容器
