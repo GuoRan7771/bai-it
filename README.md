@@ -39,13 +39,21 @@
 
 ## 安装
 
-### 从 Chrome Web Store 安装（推荐）
+### 从商店安装（推荐）
 
-> 即将上架，敬请期待。
+> Chrome Web Store 和 Edge Add-ons 均在审核中，敬请期待。
 
-### 手动安装（开发者）
+### 从 GitHub Release 安装
 
-1. 下载或克隆本仓库
+1. 到 [Releases](https://github.com/CapeAga/bai-it/releases) 页面下载最新的 `bai-it-vX.X.X.zip`
+2. **解压** zip 文件到一个文件夹
+3. 打开 Chrome，进入 `chrome://extensions/`
+4. 打开右上角「开发者模式」
+5. 点击「加载已解压的扩展程序」，选择解压出来的文件夹
+
+### 从源码构建（开发者）
+
+1. 克隆本仓库
 2. 安装依赖并构建：
    ```bash
    npm install
