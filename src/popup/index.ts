@@ -24,6 +24,8 @@ const sliderContainer = $("assist-slider");
 const sliderFill = $("slider-fill");
 const sliderThumb = $("slider-thumb");
 const assistHint = $("assist-hint");
+const englishVocabSelect = $<HTMLSelectElement>("english-vocab-select");
+const frenchVocabSelect = $<HTMLSelectElement>("french-vocab-select");
 const segControl = $("seg-control");
 const segPill = $("seg-pill");
 const modeDesc = $("mode-desc");
@@ -214,6 +216,8 @@ async function init(): Promise<void> {
   currentLevel = assistLevel;
   updateSliderVisuals(currentLevel);
   assistHint.textContent = ASSIST_HINTS[assistLevel];
+  englishVocabSelect.value = String(config.englishVocabularySize);
+  frenchVocabSelect.value = String(config.frenchVocabularySize);
 
   // 设置显示方式
   const currentMode = intensityToMode(config.chunkIntensity);
@@ -300,6 +304,20 @@ async function init(): Promise<void> {
     isDragging = false;
     const mapping = ASSIST_TO_CONFIG[currentLevel];
     await sendMessage({ type: "updateConfig", config: mapping });
+  });
+
+  frenchVocabSelect.addEventListener("change", async () => {
+    await sendMessage({
+      type: "updateConfig",
+      config: { frenchVocabularySize: Number(frenchVocabSelect.value) },
+    });
+  });
+
+  englishVocabSelect.addEventListener("change", async () => {
+    await sendMessage({
+      type: "updateConfig",
+      config: { englishVocabularySize: Number(englishVocabSelect.value) },
+    });
   });
 
   // 显示方式分段选择器

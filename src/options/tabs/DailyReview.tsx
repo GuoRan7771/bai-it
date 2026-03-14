@@ -13,7 +13,7 @@ interface DailyReviewProps {
 
 export function DailyReview({ db, isExample }: DailyReviewProps) {
   const { practiseSentence, todayVocab, weekSentenceCount, loading } = useReviewData(db, isExample);
-  const { masteredWords, toggleMastered } = useMasteredWords();
+  const { isMastered, toggleMastered } = useMasteredWords();
   const [breakCount, setBreakCount] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
 
@@ -71,6 +71,7 @@ export function DailyReview({ db, isExample }: DailyReviewProps) {
                 <ChunkLines
                   chunked={practiseSentence.chunked}
                   newWords={practiseSentence.new_words}
+                  language={practiseSentence.language ?? "english"}
                 />
               </GlassCard>
             </div>
@@ -84,7 +85,7 @@ export function DailyReview({ db, isExample }: DailyReviewProps) {
           <div className="sub-label">今天掰过的词</div>
           <div className="review-vocab-grid">
             {todayVocab.map((v) => {
-              const isMastered = v.status === "mastered" || masteredWords.has(v.word.toLowerCase());
+              const mastered = v.status === "mastered" || isMastered(v.word, "english");
               return (
                 <GlassCard key={v.id} className="review-vocab-item">
                   <div className="review-vocab-top">
@@ -94,10 +95,10 @@ export function DailyReview({ db, isExample }: DailyReviewProps) {
                   <div className="review-vocab-def">{v.definition || ""}</div>
                   <button
                     className="review-vocab-mastered"
-                    onClick={() => toggleMastered(v.word)}
+                    onClick={() => toggleMastered(v.word, "english")}
                     type="button"
                   >
-                    {isMastered ? "✓ 已掌握" : "标记掌握"}
+                    {mastered ? "✓ 已掌握" : "标记掌握"}
                   </button>
                 </GlassCard>
               );

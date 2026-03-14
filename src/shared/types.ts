@@ -1,5 +1,8 @@
 // ========== LLM 配置 ==========
 
+export type SupportedLanguage = "english" | "french";
+export type LearningLanguage = SupportedLanguage | "auto";
+
 /** llm-adapter 内部使用的扁平格式（从 provider 推导） */
 export interface LLMConfig {
   format: "gemini" | "openai-compatible";
@@ -27,10 +30,13 @@ export interface LLMMultiConfig {
 
 export interface BaitConfig {
   llm: LLMMultiConfig;
+  learningLanguage: LearningLanguage;
   sensitivity: number; // 2-5，细读模式复杂度阈值
   scanThreshold: "short" | "medium" | "long"; // 扫读模式最小词数阈值
   chunkGranularity: "coarse" | "medium" | "fine"; // 拆分颗粒度
   chunkIntensity: number; // 1-5，渲染力度
+  englishVocabularySize: number; // -1 关闭词汇提示；0-5806 按前 N 高频词过滤英语常用词
+  frenchVocabularySize: number; // -1 关闭词汇提示；0-6000 按前 N 高频词过滤法语常用词
   disabledSites: string[]; // hostname 黑名单
 }
 
@@ -38,7 +44,7 @@ export const DEFAULT_PROVIDERS: Record<ProviderKey, ProviderConfig> = {
   gemini: { apiKey: "", model: "gemini-3.1-flash-lite-preview" },
   chatgpt: { apiKey: "", model: "gpt-4.1-mini" },
   deepseek: { apiKey: "", model: "deepseek-chat" },
-  qwen: { apiKey: "", model: "qwen3-flash" },
+  qwen: { apiKey: "", model: "qwen3.5-flash" },
   kimi: { apiKey: "", model: "kimi-k2.5" },
 };
 
@@ -47,10 +53,13 @@ export const DEFAULT_CONFIG: BaitConfig = {
     activeProvider: "gemini",
     providers: { ...DEFAULT_PROVIDERS },
   },
+  learningLanguage: "auto",
   sensitivity: 3,
   scanThreshold: "medium",
   chunkGranularity: "fine",
   chunkIntensity: 5,
+  englishVocabularySize: 5806,
+  frenchVocabularySize: 6000,
   disabledSites: [],
 };
 
@@ -96,7 +105,7 @@ export function migrateLLMConfig(raw: unknown): LLMMultiConfig {
 // ========== Content Script ↔ Service Worker 消息 ==========
 
 export type Message =
-  | { type: "chunk"; sentences: string[]; source_url?: string }
+  | { type: "chunk"; sentences: string[]; source_url?: string; language?: SupportedLanguage }
   | { type: "hasApiKey" }
   | { type: "getConfig" }
   | { type: "updateConfig"; config: Partial<BaitConfig> }
@@ -105,7 +114,7 @@ export type Message =
   | { type: "pauseTab"; tabId: number }
   | { type: "resumeTab"; tabId: number }
   | { type: "getTabState"; tabId: number; hostname: string }
-  | { type: "saveSentence"; text: string; source_url: string; source_hostname: string; manual: boolean; new_words: string[] }
+  | { type: "saveSentence"; text: string; source_url: string; source_hostname: string; manual: boolean; new_words: string[]; language?: SupportedLanguage }
   | { type: "analyzeSentences"; sentenceIds: string[] };
 
 export type BackgroundMessage =
@@ -123,6 +132,7 @@ export interface ChunkResult {
   chunked: string;
   isSimple: boolean;
   newWords: { word: string; definition: string }[];
+  language?: SupportedLanguage;
   sentenceAnalysis?: string;
   expressionTips?: string;
 }
@@ -220,6 +230,7 @@ export interface LearningRecord {
   id: string; // UUID
   sentence: string;
   chunked: string;
+  language?: SupportedLanguage;
   sentence_analysis?: string; // 句式讲解
   expression_tips?: string; // 学会表达
   pattern_key?: PatternKey;
@@ -286,6 +297,7 @@ export interface WallpaperRecord {
 export interface PendingSentenceRecord {
   id: string; // UUID
   text: string;
+  language?: SupportedLanguage;
   source_url: string;
   source_hostname: string;
   manual: boolean;

@@ -55,7 +55,8 @@ function SentenceCollapsed({ record, onClick }: { record: LearningRecord; onClic
 }
 
 function SentenceExpanded({ record, onClick }: { record: LearningRecord; onClick: () => void }) {
-  const { masteredWords, toggleMastered } = useMasteredWords();
+  const { isMastered, toggleMastered } = useMasteredWords();
+  const language = record.language ?? "english";
 
   return (
     <GlassCard className="sent-expanded" onClick={onClick}>
@@ -71,7 +72,7 @@ function SentenceExpanded({ record, onClick }: { record: LearningRecord; onClick
 
       {/* Layer 2: 分块 */}
       <div className="sent-section-label" style={{ marginTop: 0 }}>分块</div>
-      <ChunkLines chunked={record.chunked} newWords={record.new_words} />
+      <ChunkLines chunked={record.chunked} newWords={record.new_words} language={language} />
 
       {/* Layer 3: 为什么难读 */}
       {record.sentence_analysis && (
@@ -102,8 +103,8 @@ function SentenceExpanded({ record, onClick }: { record: LearningRecord; onClick
                 key={i}
                 word={w.word}
                 definition={w.definition}
-                mastered={masteredWords.has(w.word.toLowerCase())}
-                onToggleMastered={() => toggleMastered(w.word)}
+                mastered={isMastered(w.word, language)}
+                onToggleMastered={() => toggleMastered(w.word, language)}
               />
             ))}
           </div>

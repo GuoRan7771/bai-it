@@ -1,9 +1,11 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import type { SupportedLanguage } from "../../shared/types.ts";
 import { useMasteredWords } from "../hooks/useMasteredWords.ts";
 
 interface TipData {
   word: string;
   def: string;
+  language: SupportedLanguage;
   // Target element rect (viewport coords)
   targetCenterX: number;
   targetTop: number;
@@ -20,7 +22,7 @@ interface TipPos {
 export function WordTooltip() {
   const [data, setData] = useState<TipData | null>(null);
   const [pos, setPos] = useState<TipPos | null>(null);
-  const { masteredWords, toggleMastered } = useMasteredWords();
+  const { isMastered, toggleMastered } = useMasteredWords();
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -61,11 +63,12 @@ export function WordTooltip() {
 
       const word = el.getAttribute("data-word") || "";
       const def = el.getAttribute("data-def") || "";
+      const language = (el.getAttribute("data-lang") || "english") as SupportedLanguage;
       if (!def) return;
 
       const rect = el.getBoundingClientRect();
       setData({
-        word, def,
+        word, def, language,
         targetCenterX: rect.left + rect.width / 2,
         targetTop: rect.top,
         targetBottom: rect.bottom,
@@ -86,12 +89,12 @@ export function WordTooltip() {
   }, [clearHide, schedHide]);
 
   const handleMark = useCallback(() => {
-    if (data) { toggleMastered(data.word); setData(null); setPos(null); }
+    if (data) { toggleMastered(data.word, data.language); setData(null); setPos(null); }
   }, [data, toggleMastered]);
 
   if (!data) return null;
 
-  const isMastered = masteredWords.has(data.word.toLowerCase());
+  const mastered = isMastered(data.word, data.language);
   const visible = pos !== null;
 
   return (
@@ -112,11 +115,11 @@ export function WordTooltip() {
         <div className="vt-def">{data.def}</div>
         <div className="vt-foot">
           <button
-            className={`vt-mark${isMastered ? " is-done" : ""}`}
+            className={`vt-mark${mastered ? " is-done" : ""}`}
             onClick={handleMark}
             type="button"
           >
-            {isMastered ? (
+            {mastered ? (
               <svg className="vt-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
                 <polyline points="2.5,6 5.5,9 9.5,3" />
               </svg>
@@ -125,7 +128,7 @@ export function WordTooltip() {
                 <circle cx="6" cy="6" r="4.5" />
               </svg>
             )}
-            {isMastered ? "已掌握" : "标记掌握"}
+            {mastered ? "已掌握" : "标记掌握"}
           </button>
         </div>
       </div>

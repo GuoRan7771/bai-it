@@ -17,17 +17,36 @@ import { openDB as openDataDB, pendingSentenceDAO, learningRecordDAO } from "../
 
 // ========== 配置管理 ==========
 
+function normalizeVocabularySize(value: unknown, fallback: number, max: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(-1, Math.min(max, Math.round(numeric)));
+}
+
 async function getConfig(): Promise<BaitConfig> {
   const keys = Object.keys(DEFAULT_CONFIG);
   const items = await chrome.storage.sync.get(keys);
-  const config = items as unknown as BaitConfig;
+  const config = { ...DEFAULT_CONFIG, ...items } as unknown as BaitConfig;
 
   if (!Array.isArray(config.disabledSites)) {
     config.disabledSites = [];
   }
+  if (!config.learningLanguage) {
+    config.learningLanguage = "auto";
+  }
   if (!config.chunkGranularity) {
     config.chunkGranularity = "fine";
   }
+  config.englishVocabularySize = normalizeVocabularySize(
+    config.englishVocabularySize,
+    DEFAULT_CONFIG.englishVocabularySize,
+    5806,
+  );
+  config.frenchVocabularySize = normalizeVocabularySize(
+    config.frenchVocabularySize,
+    DEFAULT_CONFIG.frenchVocabularySize,
+    6000,
+  );
   // 兼容旧格式 + 新格式
   config.llm = migrateLLMConfig(config.llm);
 
@@ -40,6 +59,16 @@ async function updateConfig(partial: Partial<BaitConfig>): Promise<BaitConfig> {
   if (partial.llm) {
     updated.llm = { ...current.llm, ...partial.llm };
   }
+  updated.englishVocabularySize = normalizeVocabularySize(
+    updated.englishVocabularySize,
+    DEFAULT_CONFIG.englishVocabularySize,
+    5806,
+  );
+  updated.frenchVocabularySize = normalizeVocabularySize(
+    updated.frenchVocabularySize,
+    DEFAULT_CONFIG.frenchVocabularySize,
+    6000,
+  );
   await chrome.storage.sync.set(updated as Record<string, unknown>);
   return updated;
 }
@@ -105,6 +134,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 let pendingBatch: {
   sentences: string[];
+  language: "english" | "french";
   source_url?: string;
   resolvers: Map<string, (result: ChunkResult) => void>;
   timer: ReturnType<typeof setTimeout> | null;
@@ -115,11 +145,16 @@ const MAX_BATCH_SIZE = 5;
 
 function addToBatch(
   sentence: string,
+  language: "english" | "french" = "english",
   sourceUrl?: string
 ): Promise<ChunkResult> {
   return new Promise((resolve) => {
+    if (pendingBatch && pendingBatch.language !== language) {
+      flushBatch().catch(() => {});
+    }
+
     if (!pendingBatch) {
-      pendingBatch = { sentences: [], source_url: sourceUrl, resolvers: new Map(), timer: null };
+      pendingBatch = { sentences: [], language, source_url: sourceUrl, resolvers: new Map(), timer: null };
     }
 
     pendingBatch.sentences.push(sentence);
@@ -150,7 +185,9 @@ async function flushBatch(): Promise<void> {
       throw new Error("API key 未配置");
     }
 
-    const results = await chunkSentences(batch.sentences, llmConfig);
+    const results = await chunkSentences(batch.sentences, llmConfig, {
+      language: batch.language,
+    });
 
     // 写缓存
     const cachePairs = results.map((r, i) => ({
@@ -172,6 +209,7 @@ async function flushBatch(): Promise<void> {
         original: sentence,
         chunked: sentence,
         isSimple: true,
+        language: batch.language,
         newWords: [],
       });
     }
@@ -231,11 +269,13 @@ async function processAnalysisBatch(sentenceIds: string[]): Promise<void> {
         continue;
       }
 
-      const result = await analyzeSentenceFull(pending.text, llmConfig);
+      const language = pending.language ?? "english";
+      const result = await analyzeSentenceFull(pending.text, llmConfig, language);
 
       const lr = await learningRecordDAO.add(db, {
         sentence: pending.text,
         chunked: result.chunked,
+        language,
         sentence_analysis: result.sentence_analysis,
         expression_tips: result.expression_tips,
         pattern_key: result.pattern_key as PatternKey,
@@ -283,7 +323,7 @@ async function handleMessage(
 ): Promise<unknown> {
   switch (message.type) {
     case "chunk": {
-      const { sentences, source_url } = message;
+      const { sentences, source_url, language = "english" } = message;
 
       // 1. 先查缓存
       const cached = await getCachedBatch(sentences);
@@ -296,7 +336,7 @@ async function handleMessage(
 
       // 3. 未命中的加入批量队列
       const apiResults = await Promise.all(
-        uncached.map(s => addToBatch(s, source_url))
+        uncached.map(s => addToBatch(s, language, source_url))
       );
 
       // 4. 合并
@@ -379,6 +419,7 @@ async function handleMessage(
         const db = await getDB();
         const record = await pendingSentenceDAO.add(db, {
           text: message.text,
+          language: message.language,
           source_url: message.source_url,
           source_hostname: message.source_hostname,
           manual: message.manual,

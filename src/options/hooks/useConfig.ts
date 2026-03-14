@@ -2,6 +2,12 @@ import { useState, useEffect, useCallback } from "react";
 import type { BaitConfig, LLMMultiConfig } from "../../shared/types.ts";
 import { DEFAULT_CONFIG, migrateLLMConfig } from "../../shared/types.ts";
 
+function normalizeVocabularySize(value: unknown, fallback: number, max: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(-1, Math.min(max, Math.round(numeric)));
+}
+
 export function useConfig() {
   const [config, setConfig] = useState<BaitConfig>(DEFAULT_CONFIG);
   const [loading, setLoading] = useState(true);
@@ -16,19 +22,18 @@ export function useConfig() {
         llm: migrateLLMConfig(raw.llm),
       };
       if (!Array.isArray(merged.disabledSites)) merged.disabledSites = [];
+      merged.englishVocabularySize = normalizeVocabularySize(
+        merged.englishVocabularySize,
+        DEFAULT_CONFIG.englishVocabularySize,
+        5806,
+      );
+      merged.frenchVocabularySize = normalizeVocabularySize(
+        merged.frenchVocabularySize,
+        DEFAULT_CONFIG.frenchVocabularySize,
+        6000,
+      );
       setConfig(merged);
       setLoading(false);
-    });
-  }, []);
-
-  const saveConfig = useCallback(async (partial: Partial<BaitConfig>) => {
-    setConfig((prev) => {
-      const updated = { ...prev, ...partial };
-      if (partial.llm) {
-        updated.llm = { ...prev.llm, ...partial.llm };
-      }
-      chrome.storage.sync.set(updated as Record<string, unknown>);
-      return updated;
     });
   }, []);
 
@@ -44,5 +49,5 @@ export function useConfig() {
     });
   }, []);
 
-  return { config, loading, saveConfig, updateLLM };
+  return { config, loading, updateLLM };
 }

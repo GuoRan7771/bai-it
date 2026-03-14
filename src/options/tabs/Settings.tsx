@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import type { ProviderKey, LLMMultiConfig } from "../../shared/types.ts";
-import { DEFAULT_PROVIDERS, PROVIDER_META, resolveLLMConfig } from "../../shared/types.ts";
+import { DEFAULT_PROVIDERS, resolveLLMConfig } from "../../shared/types.ts";
 import { chunkSentences } from "../../shared/llm-adapter.ts";
 import { GlassCard } from "../components/GlassCard.tsx";
 import { PROVIDER_INFO } from "../constants.ts";

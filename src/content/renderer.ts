@@ -12,6 +12,8 @@
  */
 
 import type { ChunkResult } from "../shared/types.ts";
+import { normalizeWord, splitByWholeWordMatches } from "../shared/language.ts";
+import type { SupportedLanguage } from "../shared/types.ts";
 
 interface ChunkedLine {
   indent: number;
@@ -45,23 +47,22 @@ function parseChunkedText(chunked: string): ChunkedLine[] {
  */
 function markNewWords(
   text: string,
-  newWords: { word: string; definition: string }[]
+  newWords: { word: string; definition: string }[],
+  language: SupportedLanguage,
 ): string {
   if (newWords.length === 0) return escapeHtml(text);
 
-  const wordPattern = newWords
-    .map((w) => w.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("|");
+  const wordMap = new Map(newWords.map((w) => [normalizeWord(w.word, language), w.definition]));
+  const parts = splitByWholeWordMatches(text, newWords.map((word) => word.word));
 
-  const wordMap = new Map(newWords.map((w) => [w.word.toLowerCase(), w.definition]));
-
-  return escapeHtml(text).replace(
-    new RegExp(`\\b(${wordPattern})\\b`, "gi"),
-    (match) => {
-      const def = wordMap.get(match.toLowerCase()) ?? "";
-      return `<span class="enlearn-word" data-def="${escapeHtml(def)}" data-word="${match.toLowerCase()}">${match}</span>`;
-    }
-  );
+  return parts
+    .map((part) => {
+      if (!part.matched) return escapeHtml(part.text);
+      const normalized = normalizeWord(part.text, language);
+      const def = wordMap.get(normalized) ?? "";
+      return `<span class="enlearn-word" data-def="${escapeHtml(def)}" data-word="${normalized}">${escapeHtml(part.text)}</span>`;
+    })
+    .join("");
 }
 
 function escapeHtml(text: string): string {
@@ -72,22 +73,30 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function renderL5(lines: ChunkedLine[], newWords: { word: string; definition: string }[]): string {
+function renderL5(
+  lines: ChunkedLine[],
+  newWords: { word: string; definition: string }[],
+  language: SupportedLanguage,
+): string {
   return lines
     .map((line) => {
       if (line.isParagraphBreak) return '<span class="enlearn-para-break" style="display:block !important;height:0.8em"></span>';
-      const textHtml = markNewWords(line.text, newWords);
+      const textHtml = markNewWords(line.text, newWords, language);
       const pad = line.indent > 0 ? `padding-left:${line.indent}em;` : "";
       return `<span class="enlearn-line enlearn-indent-${line.indent} enlearn-depth-${line.indent}" style="display:block !important;${pad}">${textHtml}</span>`;
     })
     .join("");
 }
 
-function renderL4(lines: ChunkedLine[], newWords: { word: string; definition: string }[]): string {
+function renderL4(
+  lines: ChunkedLine[],
+  newWords: { word: string; definition: string }[],
+  language: SupportedLanguage,
+): string {
   return lines
     .map((line) => {
       if (line.isParagraphBreak) return '<span class="enlearn-para-break" style="display:block !important;height:0.8em"></span>';
-      const textHtml = markNewWords(line.text, newWords);
+      const textHtml = markNewWords(line.text, newWords, language);
       const pad = line.indent > 0 ? `padding-left:${line.indent}em;` : "";
       // 保留缩进，不加透明度（depth 全为 0）
       return `<span class="enlearn-line enlearn-indent-${line.indent} enlearn-depth-0" style="display:block !important;${pad}">${textHtml}</span>`;
@@ -95,18 +104,26 @@ function renderL4(lines: ChunkedLine[], newWords: { word: string; definition: st
     .join("");
 }
 
-function renderL3(lines: ChunkedLine[], newWords: { word: string; definition: string }[]): string {
+function renderL3(
+  lines: ChunkedLine[],
+  newWords: { word: string; definition: string }[],
+  language: SupportedLanguage,
+): string {
   return lines
     .map((line) => {
       if (line.isParagraphBreak) return '<span class="enlearn-para-break" style="display:block !important;height:0.8em"></span>';
-      const textHtml = markNewWords(line.text, newWords);
+      const textHtml = markNewWords(line.text, newWords, language);
       // 只分行，不缩进（所有行左对齐）
       return `<span class="enlearn-line enlearn-indent-0 enlearn-depth-0" style="display:block !important">${textHtml}</span>`;
     })
     .join("");
 }
 
-function renderL2(lines: ChunkedLine[], newWords: { word: string; definition: string }[]): string {
+function renderL2(
+  lines: ChunkedLine[],
+  newWords: { word: string; definition: string }[],
+  language: SupportedLanguage,
+): string {
   const groups: string[] = [];
   let current = "";
 
@@ -120,16 +137,20 @@ function renderL2(lines: ChunkedLine[], newWords: { word: string; definition: st
   }
   if (current) groups.push(current);
 
-  const parts = groups.map((text) => markNewWords(text, newWords));
+  const parts = groups.map((text) => markNewWords(text, newWords, language));
   const html = parts.join('<span class="enlearn-separator">\u00B7</span>');
 
   return `<span class="enlearn-inline-content">${html}</span>`;
 }
 
-function renderL1(lines: ChunkedLine[], newWords: { word: string; definition: string }[]): string {
+function renderL1(
+  lines: ChunkedLine[],
+  newWords: { word: string; definition: string }[],
+  language: SupportedLanguage,
+): string {
   const parts = lines.map((line) => {
     if (line.isParagraphBreak) return " ";
-    const textHtml = markNewWords(line.text, newWords);
+    const textHtml = markNewWords(line.text, newWords, language);
     if (line.indent > 0) {
       // 从句/修饰部分变淡，主句保持正常
       return `<span class="enlearn-dim">${textHtml}</span>`;
@@ -149,28 +170,30 @@ export function renderChunkedHtml(result: ChunkResult, intensity: number = 5): s
   const lines = parseChunkedText(result.chunked);
   const isInline = intensity <= 2;
   const containerClass = isInline ? "enlearn-chunked enlearn-chunked-inline" : "enlearn-chunked";
+  const language = result.language ?? "english";
 
   let linesHtml: string;
   switch (intensity) {
     case 1:
-      linesHtml = renderL1(lines, result.newWords);
+      linesHtml = renderL1(lines, result.newWords, language);
       break;
     case 2:
-      linesHtml = renderL2(lines, result.newWords);
+      linesHtml = renderL2(lines, result.newWords, language);
       break;
     case 3:
-      linesHtml = renderL3(lines, result.newWords);
+      linesHtml = renderL3(lines, result.newWords, language);
       break;
     case 4:
-      linesHtml = renderL4(lines, result.newWords);
+      linesHtml = renderL4(lines, result.newWords, language);
       break;
     default:
-      linesHtml = renderL5(lines, result.newWords);
+      linesHtml = renderL5(lines, result.newWords, language);
       break;
   }
 
   const containerStyle = isInline ? "" : ' style="display:block !important"';
-  return `<div class="${containerClass}"${containerStyle} data-original="${escapeHtml(result.original)}">${linesHtml}</div>`;
+  const languageAttr = result.language ? ` data-language="${result.language}"` : "";
+  return `<div class="${containerClass}"${containerStyle} data-original="${escapeHtml(result.original)}"${languageAttr}>${linesHtml}</div>`;
 }
 
 /**

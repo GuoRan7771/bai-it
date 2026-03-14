@@ -613,3 +613,28 @@ describe("getPOSTags", () => {
     expect(tags![0]).toBe("PRP"); // She → 代词
   });
 });
+
+describe("法语拆分", () => {
+  it("法语转折连词可以触发拆分", () => {
+    const result = scanSplit(
+      "Le projet avançait lentement, mais l'équipe a finalement trouvé une solution plus robuste.",
+      "medium",
+      "medium",
+      "french",
+    );
+    expect(result.chunks.length).toBeGreaterThanOrEqual(2);
+    expect(result.chunks.some((chunk) => chunk.text.toLowerCase().startsWith("mais"))).toBe(true);
+  });
+
+  it("法语前置从句后能回到主句", () => {
+    const result = scanSplit(
+      "Bien que le projet ait pris du retard, l'équipe a livré une première version stable.",
+      "medium",
+      "medium",
+      "french",
+    );
+    expect(result.chunks.length).toBeGreaterThanOrEqual(2);
+    expect(result.chunks[0].level).toBe(1);
+    expect(result.chunks.some((chunk) => chunk.text.includes("l'équipe"))).toBe(true);
+  });
+});

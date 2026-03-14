@@ -186,6 +186,65 @@
       margin-bottom: 16px;
     }
 
+    .config-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .config-copy {
+      min-width: 0;
+    }
+
+    .config-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.72);
+      margin-bottom: 2px;
+    }
+
+    .config-desc {
+      font-size: 11px;
+      color: rgba(255,255,255,0.24);
+      line-height: 1.4;
+    }
+
+    .config-select {
+      appearance: none;
+      -webkit-appearance: none;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+      color: rgba(255,255,255,0.82);
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 9px 34px 9px 12px;
+      min-width: 124px;
+      outline: none;
+      cursor: pointer;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    }
+
+    .config-select-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .config-select-wrap::after {
+      content: '▾';
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 11px;
+      color: rgba(255,255,255,0.32);
+      pointer-events: none;
+    }
+
     /* ===== Slider ===== */
     .slider-row { margin-bottom: 20px; }
 
@@ -395,6 +454,44 @@
   <div class="content" id="content">
     <div class="section">
       <div class="section-title">掰句设置</div>
+
+      <div class="config-row">
+        <div class="config-copy">
+          <div class="config-label">英语词汇量</div>
+          <div class="config-desc">调节默认隐藏多少高频英语词</div>
+        </div>
+        <div class="config-select-wrap">
+          <select class="config-select" id="english-vocab-select">
+            <option value="-1">不提示任何词汇</option>
+            <option value="0">不过滤</option>
+            <option value="1000">前 1000 词</option>
+            <option value="2000">前 2000 词</option>
+            <option value="3000">前 3000 词</option>
+            <option value="4000">前 4000 词</option>
+            <option value="5000">前 5000 词</option>
+            <option value="5806">前 5806 词</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="config-row">
+        <div class="config-copy">
+          <div class="config-label">法语词汇量</div>
+          <div class="config-desc">调节默认隐藏多少高频法语词</div>
+        </div>
+        <div class="config-select-wrap">
+          <select class="config-select" id="french-vocab-select">
+            <option value="-1">不提示任何词汇</option>
+            <option value="0">不过滤</option>
+            <option value="1000">前 1000 词</option>
+            <option value="2000">前 2000 词</option>
+            <option value="3000">前 3000 词</option>
+            <option value="4000">前 4000 词</option>
+            <option value="5000">前 5000 词</option>
+            <option value="6000">前 6000 词</option>
+          </select>
+        </div>
+      </div>
 
       <!-- Intensity slider -->
       <div class="slider-row">

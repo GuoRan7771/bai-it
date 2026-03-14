@@ -71,7 +71,7 @@ Supported LLM providers:
 | Google Gemini | gemini-3.1-flash-lite | Latest and fastest, free tier available |
 | ChatGPT | gpt-4.1-mini | Stable structured output |
 | DeepSeek | deepseek-chat | Most natural Chinese output, affordable |
-| Qwen | qwen3-flash | Fast and cheap |
+| Qwen | qwen3.5-flash | New lightweight fast model, with qwen3-flash still available |
 | Kimi | kimi-k2.5 | Current flagship model |
 
 ## Privacy

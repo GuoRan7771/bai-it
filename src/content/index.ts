@@ -2,19 +2,23 @@
  * Content Script — 页面注入
  *
  * 职责：
- * 1. 统一扫读：所有英文网页自动本地拆分 + 标注生词
+ * 1. 统一扫读：所有英文/法文网页自动本地拆分 + 标注生词
  * 2. 手动掰句：未拆开的句子挂触发按钮（无 API → 本地强制拆，有 API → LLM）
  * 3. 分块结果注入 DOM
  * 4. MutationObserver 监听动态内容
  */
 
-import { isEnglish } from "../shared/rule-engine.ts";
 import { scanSplit, toChunkedString } from "../shared/scan-rules.ts";
 import {
-  loadFrequencyList, loadDictionary, loadLemmaMap,
-  annotateWords, toNewWordsFormat, isLoaded,
+  loadFrequencyList, loadDictionary, loadLemmaMap, setFrequencyLimit,
+  annotateWords, toNewWordsFormat, isLoaded, isVocabularyHintsDisabled,
 } from "../shared/vocab.ts";
-import type { BaitConfig, ChunkResult, BackgroundMessage } from "../shared/types.ts";
+import {
+  detectElementLanguage,
+  findWholeWordMatches,
+  normalizeWord,
+} from "../shared/language.ts";
+import type { BaitConfig, ChunkResult, BackgroundMessage, SupportedLanguage } from "../shared/types.ts";
 import { DEFAULT_CONFIG } from "../shared/types.ts";
 import { createChunkedElement } from "./renderer.ts";
 import { ENLEARN_STYLES } from "./styles.ts";
@@ -24,6 +28,9 @@ import { ENLEARN_STYLES } from "./styles.ts";
 import wordFrequency from "../../data/word-frequency.json";
 import dictEntries from "../../data/dict-ecdict.json";
 import lemmaEntries from "../../data/lemma-map.json";
+import frenchWordFrequency from "../../data/word-frequency-fr.json";
+import frenchDictEntries from "../../data/dict-fr.json";
+import frenchLemmaEntries from "../../data/lemma-map-fr.json";
 
 // ========== 状态 ==========
 
@@ -31,12 +38,15 @@ let config: BaitConfig = { ...DEFAULT_CONFIG };
 let isActive = false;
 let isPaused = false;
 let processedElements = new WeakSet<Element>();
-const pendingElements = new Map<Element, string>();
+const pendingElements = new Map<Element, { text: string; language: SupportedLanguage }>();
 let intersectionObserver: IntersectionObserver | null = null;
 let mutationObserver: MutationObserver | null = null;
 let processTimer: ReturnType<typeof setTimeout> | null = null;
 const processQueue: Element[] = [];
-const knownWords = new Set<string>(); // 用户已掌握的词（从 storage 加载）
+const knownWords: Record<SupportedLanguage, Set<string>> = {
+  english: new Set<string>(),
+  french: new Set<string>(),
+};
 
 // ========== 全局 Tooltip ==========
 
@@ -44,6 +54,60 @@ let tooltipEl: HTMLElement | null = null;
 
 let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
 let currentTooltipWord: string | null = null;
+let currentTooltipLanguage: SupportedLanguage | null = null;
+
+function getKnownWords(language: SupportedLanguage): Set<string> {
+  return knownWords[language];
+}
+
+function stripVocabularyHints(result: ChunkResult, language: SupportedLanguage): ChunkResult {
+  if (!isVocabularyHintsDisabled(language) || result.newWords.length === 0) return result;
+  return { ...result, newWords: [] };
+}
+
+async function persistKnownWords(): Promise<void> {
+  await chrome.storage.local.set({
+    knownWordsByLanguage: {
+      english: [...knownWords.english],
+      french: [...knownWords.french],
+    },
+  });
+}
+
+async function loadKnownWords(): Promise<void> {
+  const stored = await chrome.storage.local.get({
+    knownWordsByLanguage: null,
+    knownWords: [],
+  });
+
+  const byLanguage = stored.knownWordsByLanguage as Record<string, unknown> | null;
+  if (byLanguage && typeof byLanguage === "object") {
+    for (const language of ["english", "french"] as const) {
+      const words = byLanguage[language];
+      if (Array.isArray(words)) {
+        for (const word of words) {
+          if (typeof word === "string") knownWords[language].add(normalizeWord(word, language));
+        }
+      }
+    }
+    return;
+  }
+
+  if (Array.isArray(stored.knownWords)) {
+    for (const word of stored.knownWords) {
+      if (typeof word === "string") knownWords.english.add(normalizeWord(word, "english"));
+    }
+  }
+}
+
+function getLanguageFromWordElement(wordEl: HTMLElement): SupportedLanguage {
+  const inlineLang = wordEl.dataset.lang;
+  if (inlineLang === "french") return "french";
+  if (inlineLang === "english") return "english";
+
+  const containerLang = wordEl.closest<HTMLElement>("[data-language]")?.dataset.language;
+  return containerLang === "french" ? "french" : "english";
+}
 
 function setupTooltip(): void {
   if (tooltipEl) return;
@@ -71,25 +135,31 @@ function scheduleHideTooltip(): void {
   tooltipHideTimer = setTimeout(() => {
     if (tooltipEl) tooltipEl.style.display = "none";
     currentTooltipWord = null;
+    currentTooltipLanguage = null;
     tooltipHideTimer = null;
   }, 150);
 }
 
 async function onTooltipClick(e: MouseEvent): Promise<void> {
   const btn = (e.target as Element).closest?.(".enlearn-tooltip-btn");
-  if (!btn || !currentTooltipWord) return;
+  if (!btn || !currentTooltipWord || !currentTooltipLanguage) return;
 
   const word = currentTooltipWord;
-  knownWords.add(word);
+  const language = currentTooltipLanguage;
+  getKnownWords(language).add(word);
 
   // Save to storage
   try {
-    await chrome.storage.local.set({ knownWords: [...knownWords] });
+    await persistKnownWords();
   } catch { /* silent */ }
 
   // Remove all annotations for this word on current page
   document.querySelectorAll(`.enlearn-word`).forEach(el => {
-    if ((el as HTMLElement).dataset.word?.toLowerCase() === word) {
+    const wordEl = el as HTMLElement;
+    if (
+      normalizeWord(wordEl.dataset.word || "", language) === word &&
+      getLanguageFromWordElement(wordEl) === language
+    ) {
       const text = document.createTextNode(el.textContent || "");
       el.parentNode?.replaceChild(text, el);
     }
@@ -98,6 +168,7 @@ async function onTooltipClick(e: MouseEvent): Promise<void> {
   // Hide tooltip
   if (tooltipEl) tooltipEl.style.display = "none";
   currentTooltipWord = null;
+  currentTooltipLanguage = null;
 }
 
 function onWordHover(e: MouseEvent): void {
@@ -110,7 +181,8 @@ function onWordHover(e: MouseEvent): void {
   // Cancel any pending hide
   if (tooltipHideTimer) { clearTimeout(tooltipHideTimer); tooltipHideTimer = null; }
 
-  currentTooltipWord = (wordEl.dataset.word || wordEl.textContent || "").toLowerCase();
+  currentTooltipWord = normalizeWord(wordEl.dataset.word || wordEl.textContent || "", getLanguageFromWordElement(wordEl));
+  currentTooltipLanguage = getLanguageFromWordElement(wordEl);
   tooltipEl.innerHTML = `<span class="enlearn-tooltip-def">${escapeHtml(def)}</span><button class="enlearn-tooltip-btn" title="标记为已掌握">✓</button>`;
   tooltipEl.style.display = "flex";
 
@@ -170,22 +242,22 @@ async function init(): Promise<void> {
 
   setupTooltip();
 
-  // 加载词汇数据
-  loadFrequencyList(wordFrequency as string[]);
-  loadDictionary(dictEntries as Record<string, string>);
-  loadLemmaMap(lemmaEntries as Record<string, string>);
+  loadFrequencyList("english", wordFrequency as string[]);
+  loadDictionary("english", dictEntries as Record<string, string>);
+  loadLemmaMap("english", lemmaEntries as Record<string, string>);
+  loadFrequencyList("french", frenchWordFrequency as string[]);
+  loadDictionary("french", frenchDictEntries as Record<string, string>);
+  loadLemmaMap("french", frenchLemmaEntries as Record<string, string>);
 
-  // 加载用户已掌握的词
   try {
-    const stored = await chrome.storage.local.get({ knownWords: [] });
-    if (Array.isArray(stored.knownWords)) {
-      for (const w of stored.knownWords) knownWords.add(w as string);
-    }
+    await loadKnownWords();
   } catch {
     // 静默失败
   }
 
   config = await sendMessage({ type: "getConfig" }) as BaitConfig;
+  setFrequencyLimit("english", config.englishVocabularySize);
+  setFrequencyLimit("french", config.frenchVocabularySize);
 
   const response = await sendMessage({ type: "checkActive" }) as { active: boolean };
   if (response.active) {
@@ -336,6 +408,16 @@ function onStorageChanged(changes: { [key: string]: chrome.storage.StorageChange
     config.scanThreshold = changes.scanThreshold.newValue as typeof config.scanThreshold;
     needReprocess = true;
   }
+  if (changes.frenchVocabularySize) {
+    config.frenchVocabularySize = changes.frenchVocabularySize.newValue as number;
+    setFrequencyLimit("french", config.frenchVocabularySize);
+    needReprocess = true;
+  }
+  if (changes.englishVocabularySize) {
+    config.englishVocabularySize = changes.englishVocabularySize.newValue as number;
+    setFrequencyLimit("english", config.englishVocabularySize);
+    needReprocess = true;
+  }
 
   // 配置变更后用新配置重新处理页面
   if (needReprocess && isActive && !isPaused) {
@@ -381,7 +463,7 @@ function extractParagraphs(el: Element): string[] {
  */
 function splitIntoSentences(paragraph: string): string[] {
   // 在句末标点 + 空格 + 大写字母/引号处拆分
-  const parts = paragraph.split(/(?<=[.!?])\s+(?=[A-Z\u201C"'])/);
+  const parts = paragraph.split(/(?<=[.!?])\s+(?=[\p{Lu}\u201C"'«])/u);
   return parts.filter(s => s.trim().length > 0);
 }
 
@@ -504,10 +586,16 @@ function restoreProcessedElements(): void {
 
 // ========== 数据采集 ==========
 
-function saveSentenceQuiet(text: string, manual: boolean, newWords: string[]): void {
+function saveSentenceQuiet(
+  text: string,
+  manual: boolean,
+  newWords: string[],
+  language: SupportedLanguage,
+): void {
   sendMessage({
     type: "saveSentence",
     text,
+    language,
     source_url: window.location.href,
     source_hostname: window.location.hostname,
     manual,
@@ -570,7 +658,7 @@ interface Breakpoint {
  *
  * 核心原则：只动 text node，不动 element node → <a> 完整保留
  */
-function processElementWithLinks(el: Element, text: string): void {
+function processElementWithLinks(el: Element, text: string, language: SupportedLanguage): void {
   // 1. 克隆
   const clone = el.cloneNode(true) as HTMLElement;
 
@@ -641,7 +729,7 @@ function processElementWithLinks(el: Element, text: string): void {
         breakpoints.push({ offset: sentStart, level: 0 });
       }
 
-      const scanResult = scanSplit(trimmed, config.scanThreshold, config.chunkGranularity);
+      const scanResult = scanSplit(trimmed, config.scanThreshold, config.chunkGranularity, language);
       if (scanResult.chunks.length > 1) {
         // 将 chunk 断点映射回 fullText 偏移（用词匹配，避免多空格导致偏移漂移）
         let searchPos = sentStart;
@@ -669,7 +757,7 @@ function processElementWithLinks(el: Element, text: string): void {
 
   if (breakpoints.length === 0) {
     // 没有断点 → 不拆分，走手动触发
-    addManualTrigger(el, text);
+    addManualTrigger(el, text, language);
     return;
   }
 
@@ -715,14 +803,17 @@ function processElementWithLinks(el: Element, text: string): void {
   }
 
   // 6. Vocab 标注：在克隆中的非 URL 文本节点上标记生词
-  const vocabAnnotations = isLoaded() ? annotateWords(text, knownWords) : [];
+  const vocabAnnotations = isLoaded(language)
+    ? annotateWords(text, getKnownWords(language), language)
+    : [];
   if (vocabAnnotations.length > 0) {
-    applyVocabToClone(clone, vocabAnnotations);
+    applyVocabToClone(clone, vocabAnnotations, language);
   }
 
   // 7. 标记为 chunked 元素
   clone.classList.add("enlearn-chunked");
   clone.setAttribute("data-original", text);
+  clone.setAttribute("data-language", language);
   clone.style.setProperty("display", "block", "important");
 
   // 8. 复制字体样式 + 插入
@@ -731,7 +822,7 @@ function processElementWithLinks(el: Element, text: string): void {
 
   // 9. 采集数据
   const sentenceNewWords = vocabAnnotations.map(a => a.word);
-  saveSentenceQuiet(text, false, sentenceNewWords);
+  saveSentenceQuiet(text, false, sentenceNewWords, language);
 }
 
 /**
@@ -739,15 +830,12 @@ function processElementWithLinks(el: Element, text: string): void {
  */
 function applyVocabToClone(
   clone: HTMLElement,
-  annotations: { word: string; definition: string }[]
+  annotations: { word: string; definition: string }[],
+  language: SupportedLanguage,
 ): void {
   const wordMap = new Map(
-    annotations.map(a => [a.word.toLowerCase(), a.definition])
+    annotations.map((a) => [normalizeWord(a.word, language), a.definition])
   );
-  const wordPattern = annotations
-    .map(a => a.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("|");
-  const regex = new RegExp(`\\b(${wordPattern})\\b`, "gi");
 
   // 收集所有非 URL 文本节点
   const textNodes: Text[] = [];
@@ -767,13 +855,8 @@ function applyVocabToClone(
   for (let ti = textNodes.length - 1; ti >= 0; ti--) {
     const textNode = textNodes[ti];
     const content = textNode.textContent || "";
-    const matches: { index: number; length: number; word: string }[] = [];
-
-    let match: RegExpExecArray | null;
-    regex.lastIndex = 0;
-    while ((match = regex.exec(content))) {
-      matches.push({ index: match.index, length: match[0].length, word: match[0] });
-    }
+    const matches = findWholeWordMatches(content, annotations.map(a => a.word))
+      .map((match) => ({ index: match.start, length: match.end - match.start, word: match.match }));
 
     if (matches.length === 0) continue;
 
@@ -787,9 +870,11 @@ function applyVocabToClone(
 
       const span = document.createElement("span");
       span.className = "enlearn-word";
-      const def = wordMap.get(m.word.toLowerCase()) || "";
+      const normalizedWord = normalizeWord(m.word, language);
+      const def = wordMap.get(normalizedWord) || "";
       span.setAttribute("data-def", def);
-      span.setAttribute("data-word", m.word.toLowerCase());
+      span.setAttribute("data-word", normalizedWord);
+      span.setAttribute("data-lang", language);
       span.textContent = wordNode.textContent;
 
       wordNode.parentNode!.replaceChild(span, wordNode);
@@ -804,7 +889,8 @@ function applyVocabToClone(
 const DOM_SELECTORS = [
   // X / Twitter
   '[data-testid="tweetText"]',
-  '[role="article"] div[lang="en"]',
+  '[role="article"] div[lang|="en"]',
+  '[role="article"] div[lang|="fr"]',
   // Reddit
   '.Post-body p', '.Comment-body p',
   '[data-testid="post-content"] p',
@@ -872,10 +958,10 @@ function findTextLeafElements(): Element[] {
     }
     if (hasBlockChild) continue;
 
-    // 文本长度和英文检查（用 extractTextFromDOM 剔除 script/style）
+    // 文本长度和语言检查（用 extractTextFromDOM 剔除 script/style）
     const text = extractTextFromDOM(el).trim();
     if (text.length < 10) continue;
-    if (!isEnglish(text)) continue;
+    if (!detectElementLanguage(el, text, config.learningLanguage)) continue;
     if (text.split(/\s+/).length < 8) continue;
 
     results.push(el);
@@ -906,12 +992,13 @@ function scanPage(): void {
     // 用 extractTextFromDOM 取干净文本（剔除 script/style 等不可见内容）
     const text = extractTextFromDOM(el).trim();
     if (text.length < 10) continue;
-    if (!isEnglish(text)) continue;
+    const language = detectElementLanguage(el, text, config.learningLanguage);
+    if (!language) continue;
 
     // 太短的文本不值得处理（短推文、标题等）
     if (text.split(/\s+/).length < 8) continue;
 
-    processTextElement(el, text);
+    processTextElement(el, text, language);
   }
 
   // 第二轮：兜底扫描——找白名单没覆盖到的文本密集叶子元素
@@ -920,19 +1007,21 @@ function scanPage(): void {
   const fallbackCandidates = findTextLeafElements();
   for (const el of fallbackCandidates) {
     const text = extractTextFromDOM(el).trim();
+    const language = detectElementLanguage(el, text, config.learningLanguage);
+    if (!language) continue;
     processedElements.add(el);
-    processElementWithLinks(el, text);
+    processElementWithLinks(el, text, language);
   }
 }
 
 /** 处理单个文本元素：拆分 + 生词标注 + DOM 注入 */
-function processTextElement(el: Element, text: string): void {
+function processTextElement(el: Element, text: string, language: SupportedLanguage): void {
   processedElements.add(el);
 
   // 含 URL 链接的元素 → clone + DOM 手术路径（保留 <a>）
   const hasUrlLinks = el.querySelector('a[href^="http"]') !== null;
   if (hasUrlLinks) {
-    processElementWithLinks(el, text);
+    processElementWithLinks(el, text, language);
     return;
   }
 
@@ -946,7 +1035,7 @@ function processTextElement(el: Element, text: string): void {
 
     const sentences = splitIntoSentences(paragraphs[pi]);
     for (const sentence of sentences) {
-      const scanResult = scanSplit(sentence, config.scanThreshold, config.chunkGranularity);
+      const scanResult = scanSplit(sentence, config.scanThreshold, config.chunkGranularity, language);
       if (scanResult.chunks.length > 1) {
         hasAnyChunks = true;
         allChunkedLines.push(toChunkedString(scanResult.chunks));
@@ -957,8 +1046,8 @@ function processTextElement(el: Element, text: string): void {
   }
 
   // 生词标注（不管是否拆分）
-  const vocabAnnotations = isLoaded()
-    ? annotateWords(text, knownWords)
+  const vocabAnnotations = isLoaded(language)
+    ? annotateWords(text, getKnownWords(language), language)
     : [];
 
   // 收集生词列表（只要词）
@@ -971,6 +1060,7 @@ function processTextElement(el: Element, text: string): void {
       original: text,
       chunked: chunkedString,
       isSimple: false,
+      language,
       newWords: toNewWordsFormat(vocabAnnotations),
     };
     const chunkedEl = createChunkedElement(chunkResult, config.chunkIntensity);
@@ -980,11 +1070,11 @@ function processTextElement(el: Element, text: string): void {
     }
   } else {
     // 没拆开 → 保留原始 DOM，只在原始元素上挂手动触发
-    addManualTrigger(el, text);
+    addManualTrigger(el, text, language);
   }
 
   // fire-and-forget 存句到 pending_sentences
-  saveSentenceQuiet(text, false, sentenceNewWords);
+  saveSentenceQuiet(text, false, sentenceNewWords, language);
 }
 
 function isEnlearnElement(el: Element): boolean {
@@ -996,7 +1086,7 @@ function isEnlearnElement(el: Element): boolean {
 
 const TRIGGER_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="1" y1="3" x2="13" y2="3"/><line x1="4" y1="7" x2="13" y2="7"/><line x1="7" y1="11" x2="13" y2="11"/></svg>`;
 
-function addManualTrigger(el: Element, text: string): void {
+function addManualTrigger(el: Element, text: string, language: SupportedLanguage): void {
   el.setAttribute("data-enlearn-trigger", "1");
   el.classList.add("enlearn-trigger-wrap");
 
@@ -1022,22 +1112,24 @@ function addManualTrigger(el: Element, text: string): void {
           type: "chunk",
           sentences: [text],
           source_url: window.location.href,
+          language,
         }) as { results: ChunkResult[] } | null;
 
         if (response?.results?.[0] && !response.results[0].isSimple) {
-          result = response.results[0];
+          result = stripVocabularyHints(response.results[0], language);
         }
       } else {
         // 无 API → 本地强制拆分（最低阈值 + 最细颗粒度）
-        const scanResult = scanSplit(text, "short", "fine");
+        const scanResult = scanSplit(text, "short", "fine", language);
         if (scanResult.chunks.length > 1) {
-          const vocabAnnotations = isLoaded()
-            ? annotateWords(text, knownWords)
+          const vocabAnnotations = isLoaded(language)
+            ? annotateWords(text, getKnownWords(language), language)
             : [];
           result = {
             original: text,
             chunked: toChunkedString(scanResult.chunks),
             isSimple: false,
+            language,
             newWords: toNewWordsFormat(vocabAnnotations),
           };
         }
@@ -1052,7 +1144,7 @@ function addManualTrigger(el: Element, text: string): void {
 
           // 手动触发 → 标记 manual: true
           const newWordsList = result.newWords?.map(w => w.word) ?? [];
-          saveSentenceQuiet(text, true, newWordsList);
+          saveSentenceQuiet(text, true, newWordsList, language);
         }
       } else {
         // 拆不动 → 移除按钮
@@ -1101,13 +1193,15 @@ async function flushProcessQueue(): Promise<void> {
 
   const batch = processQueue.splice(0, 5);
   const sentences: string[] = [];
-  const elementMap = new Map<string, Element>();
+  const elementMap = new Map<string, { el: Element; language: SupportedLanguage }>();
+  let batchLanguage: SupportedLanguage | null = null;
 
   for (const el of batch) {
-    const text = pendingElements.get(el);
-    if (!text) continue;
-    sentences.push(text);
-    elementMap.set(text, el);
+    const entry = pendingElements.get(el);
+    if (!entry) continue;
+    if (!batchLanguage) batchLanguage = entry.language;
+    sentences.push(entry.text);
+    elementMap.set(entry.text, { el, language: entry.language });
     pendingElements.delete(el);
   }
 
@@ -1122,6 +1216,7 @@ async function flushProcessQueue(): Promise<void> {
         type: "chunk",
         sentences,
         source_url: window.location.href,
+        language: batchLanguage ?? "english",
       }),
       timeoutPromise,
     ]);
@@ -1130,20 +1225,21 @@ async function flushProcessQueue(): Promise<void> {
       const response = responseOrTimeout as { results: ChunkResult[] };
 
       for (const result of response.results) {
-        const el = elementMap.get(result.original);
-        if (!el) continue;
+        const entry = elementMap.get(result.original);
+        if (!entry) continue;
+        const safeResult = stripVocabularyHints(result, entry.language);
 
-        if (result.isSimple) {
+        if (safeResult.isSimple) {
           // 不加入 chunkedTexts，让后面的 fallback 给它加手动触发按钮
           continue;
         }
 
-        const chunkedEl = createChunkedElement(result, config.chunkIntensity);
+        const chunkedEl = createChunkedElement(safeResult, config.chunkIntensity);
         if (!chunkedEl) continue;
 
-        copyFontStyles(el, chunkedEl);
-        insertChunkedElement(el, chunkedEl);
-        chunkedTexts.add(result.original);
+        copyFontStyles(entry.el, chunkedEl);
+        insertChunkedElement(entry.el, chunkedEl);
+        chunkedTexts.add(safeResult.original);
       }
     }
   } catch {
@@ -1151,9 +1247,9 @@ async function flushProcessQueue(): Promise<void> {
   }
 
   // 未成功拆解的补手动触发
-  for (const [text, el] of elementMap) {
+  for (const [text, entry] of elementMap) {
     if (!chunkedTexts.has(text)) {
-      addManualTrigger(el, text);
+      addManualTrigger(entry.el, text, entry.language);
     }
   }
 

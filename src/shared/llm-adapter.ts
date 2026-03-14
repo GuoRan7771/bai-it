@@ -5,17 +5,27 @@
  * 在 Service Worker 中运行，直接调用 LLM API。
  */
 
-import type { LLMConfig, ChunkResult, FullAnalysisResult } from "./types.ts";
+import { getLanguageLabel } from "./language.ts";
+import type { LLMConfig, ChunkResult, FullAnalysisResult, SupportedLanguage } from "./types.ts";
 
 // ========== Prompt 构建 ==========
 
-export function buildChunkPrompt(sentences: string[], knownWords: string[] = []): string {
+interface ChunkPromptOptions {
+  language?: SupportedLanguage;
+  knownWords?: string[];
+}
+
+export function buildChunkPrompt(
+  sentences: string[],
+  { language = "english", knownWords = [] }: ChunkPromptOptions = {},
+): string {
+  const languageLabel = getLanguageLabel(language);
   const knownWordsNote =
     knownWords.length > 0
       ? `The user already knows these words (do NOT mark them as new): ${knownWords.join(", ")}`
-      : "The user is at an advanced English level (IELTS 7+). Be very selective — only mark words that a proficient non-native reader would genuinely not know.";
+      : `The user is at an advanced ${languageLabel} level. Be very selective — only mark words that a proficient non-native reader would genuinely not know.`;
 
-  return `You are an English reading assistant. Your job is to restructure complex English sentences into indented chunks that reveal their grammatical structure, making them easier to parse visually.
+  return `You are a ${languageLabel} reading assistant. Your job is to restructure complex ${languageLabel} sentences into indented chunks that reveal their grammatical structure, making them easier to parse visually.
 
 ## Rules
 
@@ -38,7 +48,7 @@ For each sentence, identify words that the user likely doesn't know. Provide a b
 Important constraints for new_words:
 - Do NOT mark proper nouns, brand names, or product names (e.g. ChatGPT, Google, Tesla, iPhone)
 - Do NOT mark common tech/internet terms (e.g. AI, API, app, blog, email, online)
-- Do NOT mark words that appear in any standard 6000-word English vocabulary list
+- Do NOT mark words that appear in any standard 6000-word ${languageLabel} vocabulary list
 - Only mark words that would genuinely challenge an advanced reader — rare, literary, domain-specific, or highly idiomatic expressions
 - When in doubt, do NOT mark it. Fewer is better.
 
@@ -248,9 +258,9 @@ export function mapToChunkResults(
 export async function chunkSentences(
   sentences: string[],
   config: LLMConfig,
-  knownWords: string[] = []
+  options: ChunkPromptOptions = {},
 ): Promise<ChunkResult[]> {
-  const prompt = buildChunkPrompt(sentences, knownWords);
+  const prompt = buildChunkPrompt(sentences, options);
 
   let responseData: unknown;
 
@@ -269,7 +279,10 @@ export async function chunkSentences(
 
     responseData = await response.json();
     const items = parseGeminiResponse(responseData);
-    return mapToChunkResults(sentences, items);
+    return mapToChunkResults(sentences, items).map((result) => ({
+      ...result,
+      language: options.language,
+    }));
   } else {
     const { url, body, headers } = buildOpenAIRequest(prompt, config);
     const response = await fetch(url, {
@@ -285,7 +298,10 @@ export async function chunkSentences(
 
     responseData = await response.json();
     const items = parseOpenAIResponse(responseData);
-    return mapToChunkResults(sentences, items);
+    return mapToChunkResults(sentences, items).map((result) => ({
+      ...result,
+      language: options.language,
+    }));
   }
 }
 
@@ -296,8 +312,12 @@ const VALID_PATTERN_KEYS = [
   "long_subject", "omission", "contrast", "condition", "long_modifier", "other",
 ];
 
-export function buildFullAnalysisPrompt(sentence: string): string {
-  return `You are an English reading assistant for Chinese learners. Analyze the following English sentence in depth.
+export function buildFullAnalysisPrompt(
+  sentence: string,
+  language: SupportedLanguage = "english",
+): string {
+  const languageLabel = getLanguageLabel(language);
+  return `You are a ${languageLabel} reading assistant for Chinese learners. Analyze the following ${languageLabel} sentence in depth.
 
 ## Input sentence
 
@@ -333,7 +353,7 @@ Must be one of: ${VALID_PATTERN_KEYS.join(", ")}
 - Be concise but insightful
 
 ### new_words
-- Only words that a IELTS 7+ Chinese reader might not know
+- Only words that an advanced Chinese ${languageLabel} learner might not know
 - Do NOT mark proper nouns, brand names, common tech terms
 - Provide brief Chinese definitions
 
@@ -406,9 +426,10 @@ function extractResponseText(data: unknown, format: "gemini" | "openai-compatibl
  */
 export async function analyzeSentenceFull(
   sentence: string,
-  config: LLMConfig
+  config: LLMConfig,
+  language: SupportedLanguage = "english",
 ): Promise<FullAnalysisResult> {
-  const prompt = buildFullAnalysisPrompt(sentence);
+  const prompt = buildFullAnalysisPrompt(sentence, language);
 
   let responseData: unknown;
 

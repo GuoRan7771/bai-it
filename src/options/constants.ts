@@ -22,8 +22,8 @@ export const PROVIDER_INFO: Record<
   },
   qwen: {
     label: "Qwen",
-    models: ["qwen3-flash", "qwen-plus"],
-    hint: "qwen3-flash 速度快价格低。qwen-plus 质量更好。",
+    models: ["qwen3.5-flash", "qwen3-flash", "qwen-plus"],
+    hint: "qwen3.5-flash 是新的轻量快模。qwen3-flash 继续保留兼容，qwen-plus 质量更好。",
   },
   kimi: {
     label: "Kimi",

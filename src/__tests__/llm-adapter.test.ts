@@ -48,14 +48,22 @@ describe("buildChunkPrompt", () => {
   });
 
   it("有 knownWords 时包含已知词列表", () => {
-    const prompt = buildChunkPrompt(TEST_SENTENCES, ["the", "and"]);
+    const prompt = buildChunkPrompt(TEST_SENTENCES, { knownWords: ["the", "and"] });
     expect(prompt).toContain("the, and");
     expect(prompt).toContain("do NOT mark them as new");
   });
 
   it("无 knownWords 时用默认提示", () => {
     const prompt = buildChunkPrompt(TEST_SENTENCES);
-    expect(prompt).toContain("IELTS 7+");
+    expect(prompt).toContain("advanced English level");
+  });
+
+  it("法语模式会切换提示语", () => {
+    const prompt = buildChunkPrompt(["Bien que le projet ait pris du retard, l'équipe a livré une première version."], {
+      language: "french",
+    });
+    expect(prompt).toContain("French reading assistant");
+    expect(prompt).toContain("6000-word French vocabulary list");
   });
 });
 

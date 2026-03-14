@@ -1,19 +1,22 @@
+import { normalizeWord, splitByWholeWordMatches } from "../../shared/language.ts";
+import type { SupportedLanguage } from "../../shared/types.ts";
 import { useMasteredWords } from "../hooks/useMasteredWords.ts";
 
 interface ChunkLinesProps {
   chunked: string;
   newWords?: { word: string; definition: string }[];
+  language?: SupportedLanguage;
 }
 
-export function ChunkLines({ chunked, newWords = [] }: ChunkLinesProps) {
-  const { masteredWords } = useMasteredWords();
+export function ChunkLines({ chunked, newWords = [], language = "english" }: ChunkLinesProps) {
+  const { isMastered } = useMasteredWords();
 
   const defMap = new Map<string, string>();
   const vocabSet = new Set<string>();
   for (const w of newWords) {
-    const lower = w.word.toLowerCase();
-    vocabSet.add(lower);
-    defMap.set(lower, w.definition);
+    const normalized = normalizeWord(w.word, language);
+    vocabSet.add(normalized);
+    defMap.set(normalized, w.definition);
   }
 
   const lines = chunked.split("\n");
@@ -25,7 +28,7 @@ export function ChunkLines({ chunked, newWords = [] }: ChunkLinesProps) {
         const indent = line.length - trimmed.length;
         const isIndented = indent > 0;
 
-        const parts = highlightVocab(trimmed, vocabSet, defMap, masteredWords);
+        const parts = highlightVocab(trimmed, vocabSet, defMap, language, isMastered);
 
         return (
           <div key={i} className={isIndented ? "indent" : ""}>
@@ -41,41 +44,31 @@ function highlightVocab(
   text: string,
   vocabSet: Set<string>,
   defMap: Map<string, string>,
-  masteredWords: Set<string>
+  language: SupportedLanguage,
+  isMastered: (word: string, language?: SupportedLanguage) => boolean,
 ): React.ReactNode[] {
   if (vocabSet.size === 0) return [text];
 
-  const pattern = Array.from(vocabSet)
-    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("|");
-  const regex = new RegExp(`\\b(${pattern})\\b`, "gi");
-
   const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push(text.slice(lastIndex, match.index));
+  for (const part of splitByWholeWordMatches(text, Array.from(vocabSet))) {
+    if (!part.matched) {
+      if (part.text) parts.push(part.text);
+      continue;
     }
-    const wordLower = match[0].toLowerCase();
-    const isMastered = masteredWords.has(wordLower);
-    const def = defMap.get(wordLower) || "";
+    const normalizedWord = normalizeWord(part.text, language);
+    const mastered = isMastered(normalizedWord, language);
+    const def = defMap.get(normalizedWord) || "";
     parts.push(
       <span
-        key={match.index}
-        className={isMastered ? "vocab vocab-mastered" : "vocab"}
-        data-word={wordLower}
+        key={`${normalizedWord}-${parts.length}`}
+        className={mastered ? "vocab vocab-mastered" : "vocab"}
+        data-word={normalizedWord}
         data-def={def}
+        data-lang={language}
       >
-        {match[0]}
+        {part.text}
       </span>
     );
-    lastIndex = regex.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
   }
 
   return parts.length > 0 ? parts : [text];
